@@ -1,4 +1,6 @@
 from asyncio import get_event_loop, gather
+from typing import Tuple, List, TextIO
+
 from jd4.pool import get_sandbox, put_sandbox
 from os import link, mkfifo, path
 from socket import socket, AF_UNIX, SOCK_STREAM, SOCK_NONBLOCK
@@ -6,7 +8,6 @@ from jd4.util import read_pipe, parse_memory_bytes, parse_time_ns
 from jd4.cgroup import wait_cgroup
 from functools import partial
 from jd4.compile import build
-from io import TextIOWrapper
 
 MAX_STDERR_SIZE = 8192
 
@@ -27,7 +28,7 @@ MATCH_STATE_PLAYER_OPERATION_INVALID = 6
 
 
 class Output:
-    def __init__(self, io: TextIOWrapper):
+    def __init__(self, io: TextIO):
         self.io = io
 
     def read_int(self) -> int:
@@ -57,39 +58,67 @@ class Output:
         return int(prev_str)
 
 
+class Player:
+    def __init__(self, player_type: int, lang: str, code: str):
+        self.type = player_type
+        self.lang = lang
+        self.code = code
+        self.build = None
+
+
+class MatchState:
+    def __init__(self, index: int, status: int, detail: str, players_score: str):
+        self.index = index
+        self.status = status
+        self.detail = detail
+        self.players_score = players_score
+
+
 class Referee:
 
-    def __init__(self):
+    def __init__(self, players: List[Player]):
         self.time_limit_ns = 1 * 1000 * 1000 * 1000
         self.memory_limit_bytes = 1 * 1024 * 1024
         self.process_limit = 64
         self.state = ""
+        self.players = players
+
+    def get_first_player(self) -> int:
+        raise Exception("unimplemented")
 
     def get_input(self) -> str:
         raise Exception("unimplemented")
 
+    def judge(self, output: Output) -> Tuple[str, int, list, int]:
+        raise Exception("unimplemented")
+
     def do_input(self, input_file):
         try:
-            with open(input_file, 'w') as dst:
-                dst.write(self.get_input())
-        except BrokenPipeError:
-            pass
+            with open(input_file, 'w') as inputIO:
+                inputIO.write(self.get_input())
+        except Exception as e:
+            print(e)
+            raise e
 
-    def do_output(self, output_file):
+    def do_output(self, output_file) -> Tuple[str, int, list, int]:
         try:
-            with open(output_file, "r") as dst:
-                print("----", Output(dst).read_int())
-                print("----", Output(dst).read_int())
-                return False
-        except BrokenPipeError:
-            pass
+            with open(output_file, "r") as outputIO:
+                return self.judge(Output(outputIO))
+        except Exception as e:
+            print(e)
+            raise e
 
     async def run(self, state: str, lang: str, code: str):
         self.state = state
         loop = get_event_loop()
+        for player in self.players:
+            if player.build is not None:
+                player.build = await build(player.lang, player.code.encode("UTF-8"))
         result = await build(lang, code.encode("UTF-8"))
+        print(result)
         package = result[0]
         sandbox, = await get_sandbox(1)
+
         try:
             executable = await package.install(sandbox)
             stdin_file = path.join(sandbox.in_dir, 'stdin')
@@ -118,9 +147,14 @@ class Referee:
                                 self.memory_limit_bytes,
                                 self.process_limit))
                 execute_status = await execute_task
-                _, correct, stderr, (time_usage_ns, memory_usage_bytes) = \
+                _, (detail, status, score, next_player), stderr, (time_usage_ns, memory_usage_bytes) = \
                     await others_task
-                print(correct)
+                print(detail)
                 print(time_usage_ns)
+
+                next_player = self.get_first_player()
+                while True:
+                    if self.players[next_player].build[0] is None:
+                        return Exce
         finally:
             put_sandbox(sandbox)

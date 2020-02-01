@@ -1,21 +1,61 @@
-from typing import Tuple
-
+from typing import Tuple, List
+import json
 from gomoku import referee
-from io import TextIOWrapper
 
 from gomoku.referee import Output
 
 
 class GomokuReferee(referee.Referee):
-    def __init__(self):
-        super().__init__()
+    def __init__(self, players: List[referee.Player]):
+        self.player_count = 2
+        if len(players) != self.player_count:
+            raise Exception(
+                "length of players:{} is not equal to player_count:{}".format(len(players), self.player_count))
+        super().__init__(players)
         self.chessboard = [[0 for i in range(15)] for j in range(15)]
         self.score = [0, 0]
         self.player_index = 0
-        self.player_count = 2
+        # TODO 下面两个参数暂时没用到
         self.judge_count = 0
-
         self.judge_count_limit = 100
+
+    def get_first_player(self) -> int:
+        return 0
+
+    def is_five_chess_same(self, x, y, kx, ky):
+        chessboard = self.chessboard
+        if self.chessboard[x][y] == 0:
+            return False
+
+        for i in range(1, 5):
+            if (x + kx * i < 0) or (x + kx * i >= len(chessboard)) or (y + ky * i < 0) or (
+                    y + ky * i >= len(chessboard[x + kx * i])):
+                return False
+            if chessboard[x + kx * i][y + ky * i] != chessboard[x][y]:
+                return False
+        print("-----------")
+        print(x, y, kx, ky)
+        for i in range(1, 5):
+            print("i:", i)
+            print(x + kx * i, y + ky * i)
+            print(chessboard[x + kx * i][y + ky * i])
+        return True
+
+    def get_winner(self):
+        chessboard = self.chessboard
+        for i in range(0, len(chessboard)):
+            for j in range(0, len(chessboard[i])):
+                if chessboard[i][j] == 0:
+                    continue
+                if self.is_five_chess_same(i, j, 1, 0):
+                    return chessboard[i][j]
+                if self.is_five_chess_same(i, j, 1, 1):
+                    return chessboard[i][j]
+                if self.is_five_chess_same(i, j, 1, -1):
+                    return chessboard[i][j]
+                if self.is_five_chess_same(i, j, 0, 1):
+                    return chessboard[i][j]
+        return 0
 
     def judge(self, output: Output) -> Tuple[str, int, list, int]:
         r = int
@@ -34,10 +74,15 @@ class GomokuReferee(referee.Referee):
             self.score[(self.player_index + 1) % self.player_count] = 1
             return "{}", referee.MATCH_STATE_PLAYER_OPERATION_INVALID, self.score, 0
         self.chessboard[r][c] = self.player_index + 1
-        # TODO 写check
+        winner = self.get_winner()
 
-        self.player_index = (self.player_index + 1) % self.player_count
-        return "", referee.MATCH_STATE_CONTINUE, self.score, self.player_index
+        if winner == 0:
+            self.player_index = (self.player_index + 1) % self.player_count
+            return json.dumps(
+                {"chessboard": self.chessboard}), referee.MATCH_STATE_CONTINUE, self.score, self.player_index
+        else:
+            self.score[winner - 1] = 1
+            return json.dumps({"chessboard": self.chessboard}), referee.MATCH_STATE_END, self.score, 0
 
     def get_input(self) -> str:
         input_str = str(self.player_index + 1) + "\n"
