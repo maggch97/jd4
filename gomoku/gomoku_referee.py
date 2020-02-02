@@ -65,7 +65,7 @@ class GomokuReferee(referee.Referee):
             c = output.read_int()
         except Exception as e:
             self.score[(self.player_index + 1) % self.player_count] = 1
-            return "{}", referee.MATCH_STATE_STATUS_OUTPUT_INVALID, self.score, 0
+            return "{}", referee.MATCH_STATE_OUTPUT_INVALID, self.score, 0
 
         if r < 0 or r > 15 or c < 0 or c > 15:
             self.score[(self.player_index + 1) % self.player_count] = 1
@@ -84,10 +84,15 @@ class GomokuReferee(referee.Referee):
             self.score[winner - 1] = 1
             return json.dumps({"chessboard": self.chessboard}), referee.MATCH_STATE_END, self.score, 0
 
+    def judge_error(self) -> Tuple[str, list]:
+        self.score[(self.player_index + 1) % self.player_count] = 1
+        return json.dumps({"chessboard": self.chessboard}), self.score
+
     def get_input(self) -> str:
         input_str = str(self.player_index + 1) + "\n"
         for i in range(15):
             for j in range(15):
                 input_str += str(self.chessboard[i][j]) + " "
             input_str += "\n"
+        print(input_str)
         return input_str

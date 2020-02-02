@@ -1,3 +1,5 @@
+import sys
+import traceback
 from asyncio import get_event_loop, gather
 from typing import Tuple, List, TextIO
 
@@ -11,67 +13,75 @@ from jd4.compile import build
 
 MAX_STDERR_SIZE = 8192
 
+# TODO judge能够返回的状态只有4种
+# MATCH_STATE_END
+# MATCH_STATE_CONTINUE
+# MATCH_STATE_STATUS_OUTPUT_INVALID
+# MATCH_STATE_PLAYER_OPERATION_INVALID
+
 # 本轮结束后对局结束
 MATCH_STATE_END = 0
 # 本轮结束后对局仍继续
 MATCH_STATE_CONTINUE = 1
-# 本轮玩家代码编译错误
-MATCH_STATE_STATUS_COMPILE_ERROR = 2
-# 本轮玩家代码运行错误
-MATCH_STATE_STATUS_RUNTIME_ERROR = 3
-# 本轮玩家代码输出格式错误
-MATCH_STATE_STATUS_OUTPUT_INVALID = 4
-# 对局轮次超过上限
-MATCH_STATE_NUMBER_EXCEED_LIMIT = 5
 # 玩家操作犯规
-MATCH_STATE_PLAYER_OPERATION_INVALID = 6
+MATCH_STATE_PLAYER_OPERATION_INVALID = 2
+# 本轮玩家代码输出格式错误
+MATCH_STATE_OUTPUT_INVALID = 3
+
+# 本轮玩家代码编译错误
+MATCH_STATE_COMPILE_ERROR = 4
+# 本轮玩家代码运行错误
+MATCH_STATE_RUNTIME_ERROR = 5
+# 对局轮次超过上限
+MATCH_STATE_NUMBER_EXCEED_LIMIT = 6
+# 输出超过上限
+MATCH_STATE_OUTPUT_LIMIT_EXCEEDED = 7
+# 运行时间超过上限
+MATCH_STATE_TIME_LIMIT_EXCEEDED = 8
+# 运行内存超过上限
+MATCH_STATE_MEMORY_LIMIT_EXCEEDED = 9
 
 
 class Output:
-    def __init__(self, io: TextIO):
-        self.io = io
+    def __init__(self, output_str: str):
+        self.data = output_str.split(" ")
+        self.index = 0
 
     def read_int(self) -> int:
-        length_limit = 10
-        prev_str = ""
-        not_start = True
-        while True:
-            chunk = self.io.read(1)
-            if chunk:
-                if chunk == " ":
-                    print(not_start)
-                    if not_start:
-                        not_start = False
-                    else:
-                        break
-                elif chunk in ['-', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9']:
-                    not_start = False
-                    prev_str += chunk
-                    if len(prev_str) > length_limit:
-                        raise Exception("length of prev_str exceeds limit")
-                else:
-                    raise Exception("{} is not valid value".format(chunk))
-            else:
-                break
-        if len(prev_str) == 0:
-            raise Exception("read_int failed")
-        return int(prev_str)
+        if len(self.data) <= self.index:
+            raise Exception("en(self.data) <= self.index")
+        self.index += 1
+        print("self.index ", self.index)
+        print(self.data)
+        return int(self.data[self.index - 1])
+
+
+CODE_LANGUAGE_C = 1
+CODE_LANGUAGE_CPP = 2
+CODE_LANGUAGE_PYTHON3 = 3
 
 
 class Player:
-    def __init__(self, player_type: int, lang: str, code: str):
+    def __init__(self, player_type: int, language: int, code: str):
         self.type = player_type
-        self.lang = lang
+        if language == CODE_LANGUAGE_CPP:
+            self.lang = "cc"
+        elif language == CODE_LANGUAGE_C:
+            self.lang = "c"
+        else:
+            # TODO 测试暂时先全都定位c++
+            self.lang = "cc"
+            # raise Exception("unsupported language")
         self.code = code
         self.build = None
 
 
 class MatchState:
-    def __init__(self, index: int, status: int, detail: str, players_score: str):
+    def __init__(self, index: int, status: int, detail: str, players_score: list):
         self.index = index
         self.status = status
         self.detail = detail
-        self.players_score = players_score
+        self.players_score = players_score.copy()
 
 
 class Referee:
@@ -80,7 +90,8 @@ class Referee:
         self.time_limit_ns = 1 * 1000 * 1000 * 1000
         self.memory_limit_bytes = 1 * 1024 * 1024
         self.process_limit = 64
-        self.state = ""
+        self.output_limit_bytes = 1024
+        self.states = []
         self.players = players
 
     def get_first_player(self) -> int:
@@ -92,6 +103,9 @@ class Referee:
     def judge(self, output: Output) -> Tuple[str, int, list, int]:
         raise Exception("unimplemented")
 
+    def judge_error(self) -> Tuple[str, list]:
+        raise Exception("unimplemented")
+
     def do_input(self, input_file):
         try:
             with open(input_file, 'w') as inputIO:
@@ -100,61 +114,104 @@ class Referee:
             print(e)
             raise e
 
-    def do_output(self, output_file) -> Tuple[str, int, list, int]:
+    def get_output(self, output_file) -> (str, bool):
         try:
             with open(output_file, "r") as outputIO:
-                return self.judge(Output(outputIO))
+                output = outputIO.read(self.output_limit_bytes)
+                end = outputIO.read(1)
+                output_limit_exceeded = (end != "")
+                return output, output_limit_exceeded
         except Exception as e:
             print(e)
             raise e
 
-    async def run(self, state: str, lang: str, code: str):
-        self.state = state
+    async def run(self):
         loop = get_event_loop()
         for player in self.players:
-            if player.build is not None:
+            if player.build is None:
                 player.build = await build(player.lang, player.code.encode("UTF-8"))
-        result = await build(lang, code.encode("UTF-8"))
-        print(result)
-        package = result[0]
-        sandbox, = await get_sandbox(1)
 
+        next_player = self.get_first_player()
+        print("start")
+        MatchIndex = 0
         try:
-            executable = await package.install(sandbox)
-            stdin_file = path.join(sandbox.in_dir, 'stdin')
-            mkfifo(stdin_file)
-            stdout_file = path.join(sandbox.in_dir, 'stdout')
-            mkfifo(stdout_file)
-            stderr_file = path.join(sandbox.in_dir, 'stderr')
-            mkfifo(stderr_file)
-            with socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK) as cgroup_sock:
-                cgroup_sock.bind(path.join(sandbox.in_dir, 'cgroup'))
-                cgroup_sock.listen()
-                execute_task = loop.create_task(executable.execute(
-                    sandbox,
-                    stdin_file='/in/stdin',
-                    stdout_file='/in/stdout',
-                    stderr_file='/in/stderr',
-                    cgroup_file='/in/cgroup'))
-                others_task = gather(
-                    loop.run_in_executor(None, self.do_input, stdin_file),
-                    loop.run_in_executor(None, self.do_output, stdout_file),
-                    read_pipe(stderr_file, MAX_STDERR_SIZE),
-                    wait_cgroup(cgroup_sock,
-                                execute_task,
-                                self.time_limit_ns,
-                                self.time_limit_ns,
-                                self.memory_limit_bytes,
-                                self.process_limit))
-                execute_status = await execute_task
-                _, (detail, status, score, next_player), stderr, (time_usage_ns, memory_usage_bytes) = \
-                    await others_task
-                print(detail)
-                print(time_usage_ns)
-
-                next_player = self.get_first_player()
-                while True:
-                    if self.players[next_player].build[0] is None:
-                        return Exce
-        finally:
-            put_sandbox(sandbox)
+            while True:
+                MatchIndex += 1
+                sandbox, = await get_sandbox(1)
+                try:
+                    if self.players[next_player].build[0] is not None:
+                        executable = await self.players[next_player].build[0].install(sandbox)
+                        stdin_file = path.join(sandbox.in_dir, 'stdin')
+                        mkfifo(stdin_file)
+                        stdout_file = path.join(sandbox.in_dir, 'stdout')
+                        mkfifo(stdout_file)
+                        stderr_file = path.join(sandbox.in_dir, 'stderr')
+                        mkfifo(stderr_file)
+                        with socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK) as cgroup_sock:
+                            cgroup_sock.bind(path.join(sandbox.in_dir, 'cgroup'))
+                            cgroup_sock.listen()
+                            execute_task = loop.create_task(executable.execute(
+                                sandbox,
+                                stdin_file='/in/stdin',
+                                stdout_file='/in/stdout',
+                                stderr_file='/in/stderr',
+                                cgroup_file='/in/cgroup'))
+                            others_task = gather(
+                                loop.run_in_executor(None, self.do_input, stdin_file),
+                                loop.run_in_executor(None, self.get_output, stdout_file),
+                                read_pipe(stderr_file, MAX_STDERR_SIZE),
+                                wait_cgroup(cgroup_sock,
+                                            execute_task,
+                                            self.time_limit_ns,
+                                            self.time_limit_ns,
+                                            self.memory_limit_bytes,
+                                            self.process_limit))
+                            execute_status = await execute_task
+                            print("execute_status", execute_status)
+                            _, (output_str, output_limit_exceeded), stderr, (time_usage_ns, memory_usage_bytes) = \
+                                await others_task
+                            if output_limit_exceeded:
+                                detail, score = self.judge_error()
+                                self.states.append(
+                                    MatchState(MatchIndex, MATCH_STATE_OUTPUT_INVALID, detail, score))
+                                break
+                            elif time_usage_ns > self.time_limit_ns:
+                                detail, score = self.judge_error()
+                                self.states.append(
+                                    MatchState(MatchIndex, MATCH_STATE_TIME_LIMIT_EXCEEDED, detail, score))
+                                break
+                            elif memory_usage_bytes > self.memory_limit_bytes:
+                                detail, score = self.judge_error()
+                                self.states.append(
+                                    MatchState(MatchIndex, MATCH_STATE_MEMORY_LIMIT_EXCEEDED, detail, score))
+                                break
+                            elif execute_status != 0:
+                                detail, score = self.judge_error()
+                                self.states.append(
+                                    MatchState(MatchIndex, MATCH_STATE_RUNTIME_ERROR, detail, score))
+                                break
+                            else:
+                                detail, status, score, next_player = (self.judge(Output(output_str)))
+                                self.states.append(MatchState(MatchIndex, status, detail, score))
+                                print(detail, status, score, next_player)
+                                print(output_str)
+                                if status == MATCH_STATE_END:
+                                    break
+                                elif status == MATCH_STATE_PLAYER_OPERATION_INVALID or status == MATCH_STATE_OUTPUT_INVALID:
+                                    break
+                                elif status == MATCH_STATE_CONTINUE:
+                                    pass
+                                else:
+                                    raise Exception("status = {}".format(status))
+                    else:
+                        detail, score = self.judge_error()
+                        print(self.players[next_player].build[1])
+                        self.states.append(
+                            MatchState(MatchIndex, MATCH_STATE_COMPILE_ERROR, detail, score))
+                        break
+                finally:
+                    put_sandbox(sandbox)
+        except Exception as e:
+            print(e)
+            traceback.print_exc(file=sys.stdout)
+            pass
