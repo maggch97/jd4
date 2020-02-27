@@ -49,10 +49,10 @@ class Output:
 
     def read_int(self) -> int:
         if len(self.data) <= self.index:
-            raise Exception("en(self.data) <= self.index")
+            raise Exception("len(self.data) <= self.index")
         self.index += 1
-        print("self.index ", self.index)
-        print(self.data)
+        # print("self.index ", self.index)
+        # print(self.data)
         return int(self.data[self.index - 1])
 
 
@@ -132,7 +132,6 @@ class Referee:
                 player.build = await build(player.lang, player.code.encode("UTF-8"))
 
         next_player = self.get_first_player()
-        print("start")
         MatchIndex = 0
         try:
             while True:
@@ -167,7 +166,7 @@ class Referee:
                                             self.memory_limit_bytes,
                                             self.process_limit))
                             execute_status = await execute_task
-                            print("execute_status", execute_status)
+                            # print("execute_status", execute_status)
                             _, (output_str, output_limit_exceeded), stderr, (time_usage_ns, memory_usage_bytes) = \
                                 await others_task
                             if output_limit_exceeded:
@@ -193,8 +192,8 @@ class Referee:
                             else:
                                 detail, status, score, next_player = (self.judge(Output(output_str)))
                                 self.states.append(MatchState(MatchIndex, status, detail, score))
-                                print(detail, status, score, next_player)
-                                print(output_str)
+                                # print(detail, status, score, next_player)
+                                # print(output_str)
                                 if status == MATCH_STATE_END:
                                     break
                                 elif status == MATCH_STATE_PLAYER_OPERATION_INVALID or status == MATCH_STATE_OUTPUT_INVALID:
@@ -205,7 +204,7 @@ class Referee:
                                     raise Exception("status = {}".format(status))
                     else:
                         detail, score = self.judge_error()
-                        print(self.players[next_player].build[1])
+                        # print(self.players[next_player].build[1])
                         self.states.append(
                             MatchState(MatchIndex, MATCH_STATE_COMPILE_ERROR, detail, score))
                         break

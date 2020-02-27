@@ -33,12 +33,6 @@ class GomokuReferee(referee.Referee):
                 return False
             if chessboard[x + kx * i][y + ky * i] != chessboard[x][y]:
                 return False
-        print("-----------")
-        print(x, y, kx, ky)
-        for i in range(1, 5):
-            print("i:", i)
-            print(x + kx * i, y + ky * i)
-            print(chessboard[x + kx * i][y + ky * i])
         return True
 
     def get_winner(self):
@@ -94,5 +88,4 @@ class GomokuReferee(referee.Referee):
             for j in range(15):
                 input_str += str(self.chessboard[i][j]) + " "
             input_str += "\n"
-        print(input_str)
         return input_str
