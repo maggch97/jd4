@@ -68,6 +68,8 @@ class Player:
             self.lang = "cc"
         elif language == CODE_LANGUAGE_C:
             self.lang = "c"
+        elif language == CODE_LANGUAGE_PYTHON3:
+            self.lang = "py3"
         else:
             # TODO 测试暂时先全都定位c++
             self.lang = "cc"
@@ -77,23 +79,28 @@ class Player:
 
 
 class MatchState:
-    def __init__(self, index: int, status: int, detail: str, players_score: list):
+    def __init__(self, index: int, status: int, detail: str, players_score: list, input: str, output: str):
         self.index = index
         self.status = status
         self.detail = detail
         self.players_score = players_score.copy()
+        self.input_data = input
+        self.output_data = output
 
 
 class Referee:
 
     def __init__(self, players: List[Player]):
         self.time_limit_ns = 1 * 1000 * 1000 * 1000
-        self.memory_limit_bytes = 1 * 1024 * 1024
+        self.memory_limit_bytes = 256 * 1024 * 1024
         self.process_limit = 64
         self.output_limit_bytes = 1024
         self.states = []
         self.players = players
+        self.current_input = None
+        self.current_output = None
 
+    # TODO 下面四个方法都应该是纯虚函数，python不知道怎么写暂时就这么苟着了
     def get_first_player(self) -> int:
         raise Exception("unimplemented")
 
@@ -109,7 +116,9 @@ class Referee:
     def do_input(self, input_file):
         try:
             with open(input_file, 'w') as inputIO:
-                inputIO.write(self.get_input())
+                input_str = self.get_input()
+                self.current_input = input_str
+                inputIO.write(input_str)
         except Exception as e:
             print(e)
             raise e
@@ -118,6 +127,7 @@ class Referee:
         try:
             with open(output_file, "r") as outputIO:
                 output = outputIO.read(self.output_limit_bytes)
+                self.current_output = output
                 end = outputIO.read(1)
                 output_limit_exceeded = (end != "")
                 return output, output_limit_exceeded
@@ -132,7 +142,10 @@ class Referee:
                 player.build = await build(player.lang, player.code.encode("UTF-8"))
 
         next_player = self.get_first_player()
-        MatchIndex = 0
+        # TODO 目前评测端只支持完整评测整个对局
+        # 服务端有一个MatchIndex为1的起始状态
+        # 所以MatchIndex每次从2开始
+        MatchIndex = 1
         try:
             while True:
                 MatchIndex += 1
@@ -147,7 +160,8 @@ class Referee:
                         stderr_file = path.join(sandbox.in_dir, 'stderr')
                         mkfifo(stderr_file)
                         with socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK) as cgroup_sock:
-                            cgroup_sock.bind(path.join(sandbox.in_dir, 'cgroup'))
+                            cgroup_sock.bind(
+                                path.join(sandbox.in_dir, 'cgroup'))
                             cgroup_sock.listen()
                             execute_task = loop.create_task(executable.execute(
                                 sandbox,
@@ -156,8 +170,10 @@ class Referee:
                                 stderr_file='/in/stderr',
                                 cgroup_file='/in/cgroup'))
                             others_task = gather(
-                                loop.run_in_executor(None, self.do_input, stdin_file),
-                                loop.run_in_executor(None, self.get_output, stdout_file),
+                                loop.run_in_executor(
+                                    None, self.do_input, stdin_file),
+                                loop.run_in_executor(
+                                    None, self.get_output, stdout_file),
                                 read_pipe(stderr_file, MAX_STDERR_SIZE),
                                 wait_cgroup(cgroup_sock,
                                             execute_task,
@@ -172,26 +188,28 @@ class Referee:
                             if output_limit_exceeded:
                                 detail, score = self.judge_error()
                                 self.states.append(
-                                    MatchState(MatchIndex, MATCH_STATE_OUTPUT_INVALID, detail, score))
+                                    MatchState(MatchIndex, MATCH_STATE_OUTPUT_INVALID, detail, score, self.current_input, self.current_output))
                                 break
                             elif time_usage_ns > self.time_limit_ns:
                                 detail, score = self.judge_error()
                                 self.states.append(
-                                    MatchState(MatchIndex, MATCH_STATE_TIME_LIMIT_EXCEEDED, detail, score))
+                                    MatchState(MatchIndex, MATCH_STATE_TIME_LIMIT_EXCEEDED, detail, score, self.current_input, self.current_output))
                                 break
                             elif memory_usage_bytes > self.memory_limit_bytes:
                                 detail, score = self.judge_error()
                                 self.states.append(
-                                    MatchState(MatchIndex, MATCH_STATE_MEMORY_LIMIT_EXCEEDED, detail, score))
+                                    MatchState(MatchIndex, MATCH_STATE_MEMORY_LIMIT_EXCEEDED, detail, score, self.current_input, self.current_output))
                                 break
                             elif execute_status != 0:
                                 detail, score = self.judge_error()
                                 self.states.append(
-                                    MatchState(MatchIndex, MATCH_STATE_RUNTIME_ERROR, detail, score))
+                                    MatchState(MatchIndex, MATCH_STATE_RUNTIME_ERROR, detail, score, self.current_input, self.current_output))
                                 break
                             else:
-                                detail, status, score, next_player = (self.judge(Output(output_str)))
-                                self.states.append(MatchState(MatchIndex, status, detail, score))
+                                detail, status, score, next_player = (
+                                    self.judge(Output(output_str)))
+                                self.states.append(MatchState(
+                                    MatchIndex, status, detail, score, self.current_input, self.current_output))
                                 # print(detail, status, score, next_player)
                                 # print(output_str)
                                 if status == MATCH_STATE_END:
@@ -201,12 +219,14 @@ class Referee:
                                 elif status == MATCH_STATE_CONTINUE:
                                     pass
                                 else:
-                                    raise Exception("status = {}".format(status))
+                                    raise Exception(
+                                        "status = {}".format(status))
                     else:
+                        print(self.players[next_player].build)
                         detail, score = self.judge_error()
                         # print(self.players[next_player].build[1])
                         self.states.append(
-                            MatchState(MatchIndex, MATCH_STATE_COMPILE_ERROR, detail, score))
+                            MatchState(MatchIndex, MATCH_STATE_COMPILE_ERROR, detail, score, "", ""))
                         break
                 finally:
                     put_sandbox(sandbox)

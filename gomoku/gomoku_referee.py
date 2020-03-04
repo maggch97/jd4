@@ -59,14 +59,14 @@ class GomokuReferee(referee.Referee):
             c = output.read_int()
         except Exception as e:
             self.score[(self.player_index + 1) % self.player_count] = 1
-            return "{}", referee.MATCH_STATE_OUTPUT_INVALID, self.score, 0
+            return json.dumps({"chessboard": self.chessboard}), referee.MATCH_STATE_OUTPUT_INVALID, self.score, 0
 
         if r < 0 or r > 15 or c < 0 or c > 15:
             self.score[(self.player_index + 1) % self.player_count] = 1
-            return "{}", referee.MATCH_STATE_PLAYER_OPERATION_INVALID, self.score, 0
+            return json.dumps({"chessboard": self.chessboard}), referee.MATCH_STATE_PLAYER_OPERATION_INVALID, self.score, 0
         if self.chessboard[r][c] != 0:
             self.score[(self.player_index + 1) % self.player_count] = 1
-            return "{}", referee.MATCH_STATE_PLAYER_OPERATION_INVALID, self.score, 0
+            return json.dumps({"chessboard": self.chessboard}), referee.MATCH_STATE_PLAYER_OPERATION_INVALID, self.score, 0
         self.chessboard[r][c] = self.player_index + 1
         winner = self.get_winner()
 

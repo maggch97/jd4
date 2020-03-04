@@ -1,5 +1,6 @@
 import json
 from asyncio import sleep
+import aiohttp
 from gomoku.gomoku_referee import GomokuReferee
 from gomoku.referee import Referee, Player
 from jd4.compile import build
@@ -15,42 +16,8 @@ from functools import partial
 import requests
 import asyncio
 import logging
+
 api = "http://192.168.3.13:49900"
-code = '''
-#include <random>
-#include <iostream>
-
-using namespace std;
-int chessboard[15][15];
-
-int main() {
-
-    mt19937 mt(199793);
-    int color;
-    cin >> color;
-    for (auto &i : chessboard) {
-        for (int &j : i) {
-            cin >> j;
-        }
-    }
-    while (true) {
-        int r = mt() % 15;
-        int c = mt() % 15;
-        if (chessboard[r][c] == 0) {
-            cout << r << " " << c;
-             cout << " \\n";
-            for (auto &i : chessboard) {
-                for (int &j : i) {
-                    cout << j << " ";
-                }
-                cout << "\\n";
-            }
-            break;
-        }
-    }
-    return 0;
-}
-'''
 
 
 async def judge():
@@ -58,14 +25,15 @@ async def judge():
     while True:
         try:
             r = None
-            response = requests.get(api+"/judge")
-            judgeData = json.loads(response.text)
+            async with aiohttp.ClientSession().get(api+"/judge") as r:
+                response = await r.text(encoding="utf-8")
+            if response.strip() == "null":
+                await sleep(1)
+                continue
+            judgeData = json.loads(response)
             match_id = judgeData["ID"]
-            # print(judgeData)
             gameID = judgeData["GameID"]
-            print(gameID)
             players = judgeData["Players"]
-            # print(players)
             if gameID == 1:
                 r = GomokuReferee(
                     [Player(0, player["CodeContent"]["Language"], player["CodeContent"]["Content"]) for player in players])
@@ -78,23 +46,25 @@ async def judge():
                             "PlayersScore": json.dumps(state.players_score),
                             "Index": state.index,
                             "Detail": state.detail,
-                            "Status": state.status
+                            "Status": state.status,
+                            "InputData": state.input_data,
+                            "OutputData": state.output_data
                         }
                         for state in r.states
                     ]
                 }
-                response = requests.post(api+"/judge", json=postData)
-                print("?????????????????????????")
-                print(response.text)
+                async with aiohttp.ClientSession().post(api+"/judge", json=postData) as r:
+                    response = await r.text(encoding="utf-8")
+                print(response)
         except Exception as e:
-            print(e)
+            print("Exception : ", e)
             await sleep(1)
 
 
 async def start_judge():
     try_init_cgroup()
     event_loop = get_event_loop()
-    threadNum = 5
+    threadNum = 1
     for i in range(0, threadNum):
         event_loop.create_task(judge())
 
