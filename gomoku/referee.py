@@ -79,20 +79,22 @@ class Player:
 
 
 class MatchState:
-    def __init__(self, index: int, status: int, detail: str, players_score: list, input: str, output: str):
+    def __init__(self, index: int, status: int, detail: str, players_score: list, input: str, output: str, time_usage_ns: float, memory_usage_bytes: float):
         self.index = index
         self.status = status
         self.detail = detail
         self.players_score = players_score.copy()
         self.input_data = input
         self.output_data = output
+        self.time_usage_ns = time_usage_ns
+        self.memory_usage_bytes = memory_usage_bytes
 
 
 class Referee:
 
-    def __init__(self, players: List[Player]):
-        self.time_limit_ns = 1 * 1000 * 1000 * 1000
-        self.memory_limit_bytes = 256 * 1024 * 1024
+    def __init__(self, players: List[Player], time_limit_ns: int, memory_limit_bytes: int):
+        self.time_limit_ns = time_limit_ns
+        self.memory_limit_bytes = memory_limit_bytes
         self.process_limit = 64
         self.output_limit_bytes = 1024
         self.states = []
@@ -188,28 +190,28 @@ class Referee:
                             if output_limit_exceeded:
                                 detail, score = self.judge_error()
                                 self.states.append(
-                                    MatchState(MatchIndex, MATCH_STATE_OUTPUT_INVALID, detail, score, self.current_input, self.current_output))
+                                    MatchState(MatchIndex, MATCH_STATE_OUTPUT_INVALID, detail, score, self.current_input, self.current_output, time_usage_ns, memory_usage_bytes))
                                 break
                             elif time_usage_ns > self.time_limit_ns:
                                 detail, score = self.judge_error()
                                 self.states.append(
-                                    MatchState(MatchIndex, MATCH_STATE_TIME_LIMIT_EXCEEDED, detail, score, self.current_input, self.current_output))
+                                    MatchState(MatchIndex, MATCH_STATE_TIME_LIMIT_EXCEEDED, detail, score, self.current_input, self.current_output, time_usage_ns, memory_usage_bytes))
                                 break
                             elif memory_usage_bytes > self.memory_limit_bytes:
                                 detail, score = self.judge_error()
                                 self.states.append(
-                                    MatchState(MatchIndex, MATCH_STATE_MEMORY_LIMIT_EXCEEDED, detail, score, self.current_input, self.current_output))
+                                    MatchState(MatchIndex, MATCH_STATE_MEMORY_LIMIT_EXCEEDED, detail, score, self.current_input, self.current_output, time_usage_ns, memory_usage_bytes))
                                 break
                             elif execute_status != 0:
                                 detail, score = self.judge_error()
                                 self.states.append(
-                                    MatchState(MatchIndex, MATCH_STATE_RUNTIME_ERROR, detail, score, self.current_input, self.current_output))
+                                    MatchState(MatchIndex, MATCH_STATE_RUNTIME_ERROR, detail, score, self.current_input, self.current_output, time_usage_ns, memory_usage_bytes))
                                 break
                             else:
                                 detail, status, score, next_player = (
                                     self.judge(Output(output_str)))
                                 self.states.append(MatchState(
-                                    MatchIndex, status, detail, score, self.current_input, self.current_output))
+                                    MatchIndex, status, detail, score, self.current_input, self.current_output, time_usage_ns, memory_usage_bytes))
                                 # print(detail, status, score, next_player)
                                 # print(output_str)
                                 if status == MATCH_STATE_END:
@@ -226,7 +228,7 @@ class Referee:
                         detail, score = self.judge_error()
                         # print(self.players[next_player].build[1])
                         self.states.append(
-                            MatchState(MatchIndex, MATCH_STATE_COMPILE_ERROR, detail, score, "", ""))
+                            MatchState(MatchIndex, MATCH_STATE_COMPILE_ERROR, detail, score, "", "", 0, 0))
                         break
                 finally:
                     put_sandbox(sandbox)

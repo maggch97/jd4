@@ -6,12 +6,12 @@ from gomoku.referee import Output
 
 
 class GomokuReferee(referee.Referee):
-    def __init__(self, players: List[referee.Player]):
+    def __init__(self, players: List[referee.Player], time_limit_ns: int, memory_limit_bytes: int):
         self.player_count = 2
         if len(players) != self.player_count:
             raise Exception(
                 "length of players:{} is not equal to player_count:{}".format(len(players), self.player_count))
-        super().__init__(players)
+        super().__init__(players, time_limit_ns, memory_limit_bytes)
         self.chessboard = [[0 for i in range(15)] for j in range(15)]
         self.score = [0, 0]
         self.player_index = 0

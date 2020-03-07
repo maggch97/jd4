@@ -16,16 +16,23 @@ from functools import partial
 import requests
 import asyncio
 import logging
+import time
+import sys
 
-api = "http://192.168.3.13:49900"
+judge_count = 0
 
 
 async def judge():
-    event_loop = get_event_loop()
+    global judge_count
+    api = sys.argv[1]
+    while api[-1] == "/":
+        api = api[:-1]
+    access_token = sys.argv[2]
     while True:
         try:
             r = None
-            async with aiohttp.ClientSession().get(api+"/judge") as r:
+            async with aiohttp.ClientSession() as session:
+                r = await session.get(api+"/api/judge?access_token={}".format(access_token))
                 response = await r.text(encoding="utf-8")
             if response.strip() == "null":
                 await sleep(1)
@@ -34,10 +41,17 @@ async def judge():
             match_id = judgeData["ID"]
             gameID = judgeData["GameID"]
             players = judgeData["Players"]
+            time_limit_ns = judgeData["TimeLimitNs"]
+            memory_limit_bytes = judgeData["MemoryLimitBytes"]
             if gameID == 1:
+                time1 = time.time()
                 r = GomokuReferee(
-                    [Player(0, player["CodeContent"]["Language"], player["CodeContent"]["Content"]) for player in players])
+                    [Player(0, player["CodeContent"]["Language"],
+                            player["CodeContent"]["Content"]) for player in players],
+                    time_limit_ns,
+                    memory_limit_bytes)
                 await r.run()
+                time2 = time.time()
                 postData = {
                     "ID": match_id,
                     "Token": judgeData["JudgeToken"],
@@ -48,29 +62,25 @@ async def judge():
                             "Detail": state.detail,
                             "Status": state.status,
                             "InputData": state.input_data,
-                            "OutputData": state.output_data
+                            "OutputData": state.output_data,
+                            "TimeUsageNs": state.time_usage_ns,
+                            "MemoryUsageBytes": state.memory_usage_bytes,
                         }
                         for state in r.states
                     ]
                 }
-                async with aiohttp.ClientSession().post(api+"/judge", json=postData) as r:
+                judge_count = judge_count+1
+                async with aiohttp.ClientSession() as session:
+                    r = await session.post(api+"/api/judge?access_token={}".format(access_token), json=postData)
                     response = await r.text(encoding="utf-8")
-                print(response)
+                time3 = time.time()
+                print(time2-time1, time3-time2, time1,
+                      time2, judge_count, flush=True)
         except Exception as e:
-            print("Exception : ", e)
-            await sleep(1)
-
-
-async def start_judge():
-    try_init_cgroup()
-    event_loop = get_event_loop()
-    threadNum = 1
-    for i in range(0, threadNum):
-        event_loop.create_task(judge())
+            print("Exception : ", e, flush=True)
+            await sleep(3)
 
 
 if __name__ == '__main__':
     logging.getLogger('chardet.charsetprober').setLevel(logging.WARNING)
-    get_event_loop().run_until_complete(start_judge())
-    pending = asyncio.Task.all_tasks()
-    get_event_loop().run_until_complete(asyncio.gather(*pending))
+    get_event_loop().run_until_complete(judge())
